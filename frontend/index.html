@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JZ 个人记事</title>
+  <link rel="stylesheet" href="/ui/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>JZ 个人记事</h1>
+      <p>日志 · Todo · 记账</p>
+    </div>
+    <nav class="nav">
+      <a href="#dashboard" data-route="dashboard">首页</a>
+      <a href="#journals" data-route="journals">日志</a>
+      <a href="#todos" data-route="todos">Todo</a>
+      <a href="#accounting" data-route="accounting">记账</a>
+      <a href="#settings" data-route="settings">设置</a>
+      <a href="/auth/logout">退出</a>
+    </nav>
+  </header>
+  <main id="app" class="app-shell">
+    <div class="loading">加载中...</div>
+  </main>
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="/ui/app.js"></script>
+</body>
+</html>
