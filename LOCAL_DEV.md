@@ -2,6 +2,8 @@
 
 ## 安装依赖
 
+需要 Python 3.9+。如果 `python3 --version` 小于 3.9，请改用 `python3.9`、`python3.10` 或更新版本。
+
 ```bash
 cd /Users/bytedance/jz
 python3 -m venv .venv

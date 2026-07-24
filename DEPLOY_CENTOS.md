@@ -28,9 +28,16 @@ cd /root/jz
 sudo bash deploy/centos_install.sh
 ```
 
+如果你已经手动安装了 Python 3.9+，也可以显式指定：
+
+```bash
+sudo PYTHON_BIN=/usr/local/bin/python3.9 bash deploy/centos_install.sh
+```
+
 脚本会自动完成：
 
-- 安装 Python、pip、rsync、curl、firewalld
+- 安装 Python、pip、rsync、curl、firewalld 和编译依赖
+- 自动选择/安装 Python 3.9+（CentOS 自带旧 Python 会导致 FastAPI 新版本无法安装）
 - 创建运行用户 `jznotes`
 - 同步程序到 `/opt/jz`
 - 创建 Python 虚拟环境
@@ -138,7 +145,26 @@ sudo bash /opt/jz/deploy/verify_server.sh
 - API 文档：`http://116.62.219.67:8766/docs`
 - 健康检查：`http://116.62.219.67:8766/ping`
 
-## 8. 注意事项
+## 8. Python 版本问题
+
+如果安装依赖时报类似错误：
+
+```text
+ERROR: Could not find a version that satisfies the requirement fastapi<1,>=0.111
+```
+
+通常不是镜像源缺包，而是当前 `python3` 版本太旧。CentOS 7 自带 Python 3.6 时，pip 只能看到 FastAPI 0.83 及以前版本，因为更高版本不支持旧 Python。
+
+解决方式：使用更新后的脚本重新部署：
+
+```bash
+cd /root/jz
+sudo bash deploy/restart_server.sh
+```
+
+脚本会优先寻找 `python3.12/python3.11/python3.10/python3.9`，找不到时会编译安装 Python 3.9.18，并用它重建 `/opt/jz/.venv`。
+
+## 9. 注意事项
 
 - 当前服务使用 HTTP，不是 HTTPS。
 - 当前数据库是 SQLite，适合个人使用。
