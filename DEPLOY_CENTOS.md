@@ -5,7 +5,7 @@
 - 云服务商：阿里云
 - 操作系统：CentOS
 - 公网 IP：`116.62.219.67`
-- JZ 服务端口：`8766`
+- JZ 服务端口：`8776`
 
 该服务独立于现有 `profit_tracker`，不会占用 `8765`。
 
@@ -46,8 +46,8 @@ sudo PYTHON_BIN=/usr/local/bin/python3.9 bash deploy/centos_install.sh
 - 创建环境文件 `/etc/jz-notes.env`
 - 首次部署生成登录密码和 `JZ_AUTH_SECRET`
 - 创建 systemd 服务 `jz-notes`
-- 监听 `0.0.0.0:8766`
-- 配置 CentOS 防火墙开放 `8766/tcp`
+- 监听 `0.0.0.0:8776`
+- 配置 CentOS 防火墙开放 `8776/tcp`
 - 设置开机自启
 
 ## 3. 阿里云安全组
@@ -58,7 +58,7 @@ sudo PYTHON_BIN=/usr/local/bin/python3.9 bash deploy/centos_install.sh
 
 ```text
 协议类型: 自定义 TCP
-端口范围: 8766/8766
+端口范围: 8776/8776
 授权对象: 0.0.0.0/0
 优先级: 默认即可
 ```
@@ -123,14 +123,14 @@ sudo systemctl status jz-notes
 服务器本机验证：
 
 ```bash
-curl http://127.0.0.1:8766/ping
+curl http://127.0.0.1:8776/ping
 ```
 
 公网验证：
 
 ```bash
-curl http://116.62.219.67:8766/ping
-curl -I http://116.62.219.67:8766/ui/
+curl http://116.62.219.67:8776/ping
+curl -I http://116.62.219.67:8776/ui/
 ```
 
 也可以直接运行：
@@ -141,9 +141,9 @@ sudo bash /opt/jz/deploy/verify_server.sh
 
 ## 7. 浏览器访问地址
 
-- 前端页面：`http://116.62.219.67:8766/ui/`
-- API 文档：`http://116.62.219.67:8766/docs`
-- 健康检查：`http://116.62.219.67:8766/ping`
+- 前端页面：`http://116.62.219.67:8776/ui/`
+- API 文档：`http://116.62.219.67:8776/docs`
+- 健康检查：`http://116.62.219.67:8776/ping`
 
 ## 8. Python 版本问题
 
@@ -164,9 +164,15 @@ sudo bash deploy/restart_server.sh
 
 脚本会优先寻找 `python3.12/python3.11/python3.10/python3.9`，找不到时会编译安装 Python 3.9.18，并用它重建 `/opt/jz/.venv`。
 
+如果旧环境文件里保留了已占用的 `JZ_PORT=8766`，新版 `restart_server.sh` 会自动迁移到默认端口 `8776`。如需指定其他端口，可以执行：
+
+```bash
+sudo JZ_PORT=8788 bash deploy/restart_server.sh
+```
+
 ## 9. 注意事项
 
 - 当前服务使用 HTTP，不是 HTTPS。
 - 当前数据库是 SQLite，适合个人使用。
-- 不建议长期把 `8766` 对全公网开放；正式长期使用时建议限制来源 IP，或后续加 Nginx + HTTPS。
+- 不建议长期把 `8776` 对全公网开放；正式长期使用时建议限制来源 IP，或后续加 Nginx + HTTPS。
 - `/etc/jz-notes.env` 权限为 `0600`，其中包含登录密码和会话密钥。

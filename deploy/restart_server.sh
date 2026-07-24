@@ -101,8 +101,10 @@ require_root
 install_packages
 ensure_python39
 
-PORT="$(read_env_value JZ_PORT || true)"
-PORT="${PORT:-8766}"
+PORT="${JZ_PORT:-$(read_env_value JZ_PORT || true)}"
+if [ -z "${PORT}" ] || [ "${PORT}" = "8766" ]; then
+  PORT="8776"
+fi
 DB_PATH="$(read_env_value JZ_DB_PATH || true)"
 DB_PATH="${DB_PATH:-${APP_DIR}/jz.db}"
 AUTH_USER="$(read_env_value JZ_AUTH_USER || true)"

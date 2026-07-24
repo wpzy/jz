@@ -3,7 +3,7 @@ set -euo pipefail
 
 SERVICE_NAME="jz-notes"
 PUBLIC_HOST="${PUBLIC_HOST:-116.62.219.67}"
-PORT="${JZ_PORT:-8766}"
+PORT="${JZ_PORT:-8776}"
 
 check() {
   local url="$1"

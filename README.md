@@ -12,7 +12,7 @@
 - 后端：FastAPI + Uvicorn
 - 数据库：SQLite
 - 前端：原生 HTML/CSS/JavaScript，静态文件由 FastAPI 提供
-- 部署：CentOS + systemd，默认端口 `8766`
+- 部署：CentOS + systemd，默认端口 `8776`
 
 ## 本地启动
 
@@ -26,17 +26,17 @@ JZ_AUTH_PASSWORD=change-me JZ_AUTH_SECRET=dev-secret python server.py
 
 访问：
 
-- 前端：<http://127.0.0.1:8766/ui/>
+- 前端：<http://127.0.0.1:8776/ui/>
 - 登录用户：`admin`
 - 登录密码：`change-me`
-- 健康检查：<http://127.0.0.1:8766/ping>
+- 健康检查：<http://127.0.0.1:8776/ping>
 
 ## 生产部署
 
 目标服务器沿用现有阿里云 ECS/CentOS 环境，建议独立端口：
 
 - 公网 IP：`116.62.219.67`
-- JZ 服务端口：`8766`
+- JZ 服务端口：`8776`
 - systemd 服务：`jz-notes`
 - 服务器目录：`/opt/jz`
 - 环境文件：`/etc/jz-notes.env`
@@ -50,8 +50,8 @@ JZ_AUTH_PASSWORD=change-me JZ_AUTH_SECRET=dev-secret python server.py
 
 ```text
 JZ_HOST=127.0.0.1
-JZ_PORT=8766
-JZ_PUBLIC_BASE=http://127.0.0.1:8766
+JZ_PORT=8776
+JZ_PUBLIC_BASE=http://127.0.0.1:8776
 JZ_DB_PATH=./jz.db
 JZ_AUTH_ENABLED=1
 JZ_AUTH_USER=admin

@@ -30,7 +30,7 @@ AUTH_COOKIE_NAME = "jz_session"
 AUTH_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 
 HOST = os.getenv("JZ_HOST", "127.0.0.1")
-PORT = int(os.getenv("JZ_PORT", "8766"))
+PORT = int(os.getenv("JZ_PORT", "8776"))
 PUBLIC_BASE = os.getenv("JZ_PUBLIC_BASE", f"http://127.0.0.1:{PORT}")
 DB_PATH = Path(os.getenv("JZ_DB_PATH", "./jz.db")).expanduser()
 

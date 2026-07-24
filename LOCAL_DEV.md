@@ -15,7 +15,7 @@ pip install -r requirements-server.txt
 
 ```bash
 JZ_HOST=127.0.0.1 \
-JZ_PORT=8766 \
+JZ_PORT=8776 \
 JZ_DB_PATH=./jz.db \
 JZ_AUTH_USER=admin \
 JZ_AUTH_PASSWORD=change-me \
@@ -25,14 +25,14 @@ python server.py
 
 访问：
 
-- 前端：<http://127.0.0.1:8766/ui/>
-- API 文档：<http://127.0.0.1:8766/docs>
-- 健康检查：<http://127.0.0.1:8766/ping>
+- 前端：<http://127.0.0.1:8776/ui/>
+- API 文档：<http://127.0.0.1:8776/docs>
+- 健康检查：<http://127.0.0.1:8776/ping>
 
 ## 常用验证
 
 ```bash
-curl http://127.0.0.1:8766/ping
+curl http://127.0.0.1:8776/ping
 ```
 
 浏览器验证：

@@ -572,7 +572,7 @@ async function renderSettings() {
     <section class="card" style="margin-top:16px">
       <h3>服务信息</h3>
       <p class="muted">应用：${escapeHtml(meta.app)}；Public Base：${escapeHtml(meta.public_base)}；今天：${escapeHtml(meta.today)}</p>
-      <p class="muted">部署端口默认 8766；如公网访问失败，请确认 CentOS 防火墙和阿里云安全组已放行该端口。</p>
+      <p class="muted">部署端口默认 8776；如公网访问失败，请确认 CentOS 防火墙和阿里云安全组已放行该端口。</p>
     </section>
   `;
   bindSettings();
