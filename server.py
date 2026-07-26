@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import html
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -18,6 +19,7 @@ try:
 except ImportError:
     import sqlite3  # type: ignore[no-redef]
 
+import bleach
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -262,6 +264,116 @@ def ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
 
+ARTICLE_ALLOWED_TAGS = {
+    "a", "b", "blockquote", "br", "code", "em", "h1", "h2", "h3", "h4", "hr", "i", "li", "ol", "p", "pre",
+    "s", "span", "strong", "table", "tbody", "td", "th", "thead", "tr", "u", "ul",
+}
+ARTICLE_ALLOWED_ATTRIBUTES = {
+    "a": ["href", "title", "target", "rel"],
+    "code": ["class", "data-language"],
+    "h1": ["id"],
+    "h2": ["id"],
+    "h3": ["id"],
+    "h4": ["id"],
+    "span": ["class"],
+}
+ARTICLE_ALLOWED_PROTOCOLS = {"http", "https", "mailto"}
+
+
+def sanitize_article_html(raw_html: str) -> str:
+    cleaned = bleach.clean(
+        raw_html or "",
+        tags=ARTICLE_ALLOWED_TAGS,
+        attributes=ARTICLE_ALLOWED_ATTRIBUTES,
+        protocols=ARTICLE_ALLOWED_PROTOCOLS,
+        strip=True,
+    )
+    return bleach.linkify(cleaned, callbacks=[_link_rel_callback])
+
+
+def _link_rel_callback(attrs, new=False):
+    href_key = (None, "href")
+    href = attrs.get(href_key, "")
+    if href.startswith(("http://", "https://")):
+        attrs[(None, "target")] = "_blank"
+        attrs[(None, "rel")] = "noopener noreferrer"
+    return attrs
+
+
+def html_to_text(sanitized_html: str) -> str:
+    with_breaks = re.sub(r"</(p|h1|h2|h3|h4|li|blockquote|pre|tr)>", "\n", sanitized_html or "", flags=re.I)
+    with_breaks = re.sub(r"<br\s*/?>", "\n", with_breaks, flags=re.I)
+    text = re.sub(r"<[^>]+>", "", with_breaks)
+    text = html.unescape(text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def legacy_body_to_html(body: str) -> str:
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body or "") if part.strip()]
+    if not paragraphs:
+        return ""
+    return "".join(f"<p>{html.escape(part).replace(chr(10), '<br>')}</p>" for part in paragraphs)
+
+
+def normalize_tags(tags: str) -> str:
+    parts = []
+    seen = set()
+    for raw in re.split(r"[,，]", tags or ""):
+        tag = raw.strip()
+        if tag and tag.lower() not in seen:
+            parts.append(tag)
+            seen.add(tag.lower())
+    return ",".join(parts)
+
+
+def make_slug(title: str, entry_date: str, fallback_id: Optional[int] = None) -> str:
+    base = (title or "").strip().lower()
+    base = re.sub(r"[^a-z0-9一-鿿]+", "-", base).strip("-")
+    if not base:
+        base = f"post-{fallback_id or entry_date}"
+    return base[:80]
+
+
+def make_excerpt(content_text: str, summary: str = "", length: int = 160) -> str:
+    text = (summary or content_text or "").strip()
+    return text if len(text) <= length else f"{text[:length].rstrip()}..."
+
+
+def migrate_journal_entries(conn: sqlite3.Connection) -> None:
+    ensure_column(conn, "journal_entries", "content_html", "content_html TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "journal_entries", "content_text", "content_text TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "journal_entries", "status", "status TEXT NOT NULL DEFAULT 'draft'")
+    ensure_column(conn, "journal_entries", "published_at", "published_at INTEGER")
+    ensure_column(conn, "journal_entries", "slug", "slug TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "journal_entries", "summary", "summary TEXT NOT NULL DEFAULT ''")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_status ON journal_entries(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_published ON journal_entries(published_at DESC)")
+
+    rows = conn.execute(
+        """
+        SELECT id, entry_date, title, body, created_at, updated_at, content_html, content_text, status, published_at, slug
+        FROM journal_entries
+        WHERE content_html = '' OR content_text = '' OR slug = ''
+        """
+    ).fetchall()
+    for row in rows:
+        content_html = row["content_html"] or sanitize_article_html(legacy_body_to_html(row["body"] or ""))
+        content_text = row["content_text"] or (row["body"] or html_to_text(content_html))
+        status = row["status"] or "published"
+        if row["content_html"] == "" and (row["body"] or ""):
+            status = "published"
+        published_at = row["published_at"] or row["created_at"] or row["updated_at"] or now_ts()
+        slug = row["slug"] or make_slug(row["title"] or "", row["entry_date"], row["id"])
+        conn.execute(
+            """
+            UPDATE journal_entries
+            SET content_html = ?, content_text = ?, status = ?, published_at = ?, slug = ?, body = ?
+            WHERE id = ?
+            """,
+            (content_html, content_text, status, published_at, slug, content_text, row["id"]),
+        )
+
+
 def init_db() -> None:
     with get_db() as conn:
         conn.executescript(
@@ -338,6 +450,7 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);
             """
         )
+        migrate_journal_entries(conn)
         seed_defaults(conn)
 
 
@@ -387,6 +500,22 @@ def parse_month(value: str, field: str = "month") -> str:
     return value
 
 
+def parse_year(value: str, field: str = "year") -> str:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"{field} 必须是 YYYY")
+    if parsed < 1970 or parsed > 2999:
+        raise HTTPException(status_code=400, detail=f"{field} 必须是有效年份")
+    return f"{parsed:04d}"
+
+
+def validate_journal_status(status: str) -> str:
+    if status not in {"draft", "published"}:
+        raise HTTPException(status_code=400, detail="文章状态必须是 draft 或 published")
+    return status
+
+
 def validate_kind(kind: str) -> str:
     if kind not in {"income", "expense"}:
         raise HTTPException(status_code=400, detail="kind 必须是 income 或 expense")
@@ -426,9 +555,14 @@ def get_one_or_404(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...], 
 class JournalIn(BaseModel):
     entry_date: str
     title: str = ""
-    body: str
+    body: str = ""
+    content_html: str = ""
+    content_text: str = ""
     mood: str = ""
     tags: str = ""
+    status: str = "draft"
+    summary: str = ""
+    slug: str = ""
 
 
 class TodoIn(BaseModel):
@@ -492,12 +626,51 @@ async def meta():
 # ──────────────────────────────────────────────
 
 
+def prepare_journal_payload(item: JournalIn, existing: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    entry_date = parse_date(item.entry_date, "entry_date")
+    title = item.title.strip()
+    status = validate_journal_status(item.status or "draft")
+    tags = normalize_tags(item.tags)
+    summary = item.summary.strip()
+    raw_html = item.content_html.strip()
+    if not raw_html and item.body.strip():
+        raw_html = legacy_body_to_html(item.body.strip())
+    content_html = sanitize_article_html(raw_html)
+    content_text = (html_to_text(content_html) or item.content_text or item.body).strip()
+    if status == "published" and (not title or not content_text):
+        raise HTTPException(status_code=400, detail="发布文章需要标题和正文")
+    slug = (item.slug or "").strip() or make_slug(title, entry_date, existing.get("id") if existing else None)
+    published_at = existing.get("published_at") if existing else None
+    if status == "published" and not published_at:
+        published_at = now_ts()
+    return {
+        "entry_date": entry_date,
+        "title": title,
+        "body": content_text,
+        "content_html": content_html,
+        "content_text": content_text,
+        "mood": item.mood.strip(),
+        "tags": tags,
+        "status": status,
+        "published_at": published_at,
+        "slug": slug,
+        "summary": summary,
+    }
+
+
+def journal_response(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    data = dict(row)
+    data["excerpt"] = make_excerpt(data.get("content_text") or data.get("body") or "", data.get("summary") or "")
+    return data
+
+
 @app.get("/api/journals")
 async def list_journals(
     from_date: str = Query("", alias="from"),
     to_date: str = Query("", alias="to"),
     q: str = "",
     tag: str = "",
+    status: str = "all",
     limit: int = 50,
     offset: int = 0,
 ):
@@ -509,10 +682,13 @@ async def list_journals(
     if to_date:
         where.append("entry_date <= ?")
         params.append(parse_date(to_date, "to"))
+    if status and status != "all":
+        where.append("status = ?")
+        params.append(validate_journal_status(status))
     if q:
-        where.append("(title LIKE ? OR body LIKE ? OR tags LIKE ?)")
+        where.append("(title LIKE ? OR content_text LIKE ? OR body LIKE ? OR tags LIKE ? OR summary LIKE ?)")
         like = f"%{q}%"
-        params.extend([like, like, like])
+        params.extend([like, like, like, like, like])
     if tag:
         where.append("tags LIKE ?")
         params.append(f"%{tag}%")
@@ -520,54 +696,92 @@ async def list_journals(
     params.extend([clamp_limit(limit, 50), max(offset, 0)])
     with get_db() as conn:
         rows = conn.execute(
-            f"SELECT * FROM journal_entries {clause} ORDER BY entry_date DESC, updated_at DESC LIMIT ? OFFSET ?",
+            f"""
+            SELECT * FROM journal_entries {clause}
+            ORDER BY
+              CASE status WHEN 'draft' THEN 0 ELSE 1 END,
+              COALESCE(published_at, updated_at, created_at) DESC,
+              entry_date DESC,
+              updated_at DESC
+            LIMIT ? OFFSET ?
+            """,
             tuple(params),
         ).fetchall()
-    return rows_to_dicts(rows)
+    return [journal_response(row) for row in rows]
 
 
 @app.post("/api/journals")
 async def create_journal(item: JournalIn):
-    entry_date = parse_date(item.entry_date, "entry_date")
-    body = item.body.strip()
-    if not body:
-        raise HTTPException(status_code=400, detail="日志正文不能为空")
+    payload = prepare_journal_payload(item)
     ts = now_ts()
     with get_db() as conn:
         cur = conn.execute(
             """
-            INSERT INTO journal_entries (entry_date, title, body, mood, tags, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO journal_entries
+              (entry_date, title, body, content_html, content_text, mood, tags, status, published_at, slug, summary, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (entry_date, item.title.strip(), body, item.mood.strip(), item.tags.strip(), ts, ts),
+            (
+                payload["entry_date"], payload["title"], payload["body"], payload["content_html"], payload["content_text"],
+                payload["mood"], payload["tags"], payload["status"], payload["published_at"], payload["slug"], payload["summary"], ts, ts,
+            ),
         )
-        return get_one_or_404(conn, "SELECT * FROM journal_entries WHERE id = ?", (cur.lastrowid,), "日志")
+        row = get_one_or_404(conn, "SELECT * FROM journal_entries WHERE id = ?", (cur.lastrowid,), "文章")
+        if not row.get("slug") or row["slug"].startswith("post-"):
+            slug = make_slug(row.get("title") or "", row.get("entry_date") or "", row.get("id"))
+            conn.execute("UPDATE journal_entries SET slug = ? WHERE id = ?", (slug, row["id"]))
+            row["slug"] = slug
+        return journal_response(row)
 
 
 @app.get("/api/journals/{journal_id}")
 async def get_journal(journal_id: int):
     with get_db() as conn:
-        return get_one_or_404(conn, "SELECT * FROM journal_entries WHERE id = ?", (journal_id,), "日志")
+        return journal_response(get_one_or_404(conn, "SELECT * FROM journal_entries WHERE id = ?", (journal_id,), "文章"))
 
 
 @app.put("/api/journals/{journal_id}")
 async def update_journal(journal_id: int, item: JournalIn):
-    entry_date = parse_date(item.entry_date, "entry_date")
-    body = item.body.strip()
-    if not body:
-        raise HTTPException(status_code=400, detail="日志正文不能为空")
     with get_db() as conn:
+        existing = get_one_or_404(conn, "SELECT * FROM journal_entries WHERE id = ?", (journal_id,), "文章")
+        payload = prepare_journal_payload(item, existing)
         result = conn.execute(
             """
             UPDATE journal_entries
-            SET entry_date = ?, title = ?, body = ?, mood = ?, tags = ?, updated_at = ?
+            SET entry_date = ?, title = ?, body = ?, content_html = ?, content_text = ?, mood = ?, tags = ?,
+                status = ?, published_at = ?, slug = ?, summary = ?, updated_at = ?
             WHERE id = ?
             """,
-            (entry_date, item.title.strip(), body, item.mood.strip(), item.tags.strip(), now_ts(), journal_id),
+            (
+                payload["entry_date"], payload["title"], payload["body"], payload["content_html"], payload["content_text"],
+                payload["mood"], payload["tags"], payload["status"], payload["published_at"], payload["slug"], payload["summary"], now_ts(), journal_id,
+            ),
         )
         if result.rowcount == 0:
-            raise HTTPException(status_code=404, detail="日志不存在")
-        return get_one_or_404(conn, "SELECT * FROM journal_entries WHERE id = ?", (journal_id,), "日志")
+            raise HTTPException(status_code=404, detail="文章不存在")
+        return journal_response(get_one_or_404(conn, "SELECT * FROM journal_entries WHERE id = ?", (journal_id,), "文章"))
+
+
+@app.post("/api/journals/{journal_id}/publish")
+async def publish_journal(journal_id: int):
+    with get_db() as conn:
+        row = get_one_or_404(conn, "SELECT * FROM journal_entries WHERE id = ?", (journal_id,), "文章")
+        if not (row.get("title") or "").strip() or not (row.get("content_text") or row.get("body") or "").strip():
+            raise HTTPException(status_code=400, detail="发布文章需要标题和正文")
+        conn.execute(
+            "UPDATE journal_entries SET status = 'published', published_at = COALESCE(published_at, ?), updated_at = ? WHERE id = ?",
+            (now_ts(), now_ts(), journal_id),
+        )
+        return journal_response(get_one_or_404(conn, "SELECT * FROM journal_entries WHERE id = ?", (journal_id,), "文章"))
+
+
+@app.post("/api/journals/{journal_id}/unpublish")
+async def unpublish_journal(journal_id: int):
+    with get_db() as conn:
+        result = conn.execute("UPDATE journal_entries SET status = 'draft', updated_at = ? WHERE id = ?", (now_ts(), journal_id))
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="文章不存在")
+        return journal_response(get_one_or_404(conn, "SELECT * FROM journal_entries WHERE id = ?", (journal_id,), "文章"))
 
 
 @app.delete("/api/journals/{journal_id}")
@@ -575,7 +789,7 @@ async def delete_journal(journal_id: int):
     with get_db() as conn:
         result = conn.execute("DELETE FROM journal_entries WHERE id = ?", (journal_id,))
         if result.rowcount == 0:
-            raise HTTPException(status_code=404, detail="日志不存在")
+            raise HTTPException(status_code=404, detail="文章不存在")
     return {"ok": True}
 
 
@@ -964,13 +1178,34 @@ async def delete_transaction(txn_id: int):
     return {"ok": True}
 
 
-@app.get("/api/accounting/summary")
-async def accounting_summary(month: str = ""):
+def accounting_period(month: str = "", year: str = "", from_date: str = "", to_date: str = "") -> dict[str, str]:
+    if from_date or to_date:
+        start = parse_date(from_date or "1970-01-01", "from")
+        end = parse_date(to_date or date.today().isoformat(), "to")
+        if start > end:
+            raise HTTPException(status_code=400, detail="from 不能晚于 to")
+        return {"period_type": "custom", "from": start, "to": end, "month": "", "year": ""}
+    if year:
+        year = parse_year(year)
+        return {"period_type": "year", "from": f"{year}-01-01", "to": f"{year}-12-31", "month": "", "year": year}
     if not month:
         month = date.today().strftime("%Y-%m")
-    parse_month(month)
+    month = parse_month(month)
     start = f"{month}-01"
-    end = (datetime.strptime(start, "%Y-%m-%d").date().replace(day=28) + timedelta(days=4)).replace(day=1).isoformat()
+    end = (datetime.strptime(start, "%Y-%m-%d").date().replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    return {"period_type": "month", "from": start, "to": end.isoformat(), "month": month, "year": month[:4]}
+
+
+@app.get("/api/accounting/summary")
+async def accounting_summary(
+    month: str = "",
+    year: str = "",
+    from_date: str = Query("", alias="from"),
+    to_date: str = Query("", alias="to"),
+):
+    period = accounting_period(month=month, year=year, from_date=from_date, to_date=to_date)
+    start = period["from"]
+    end = period["to"]
     with get_db() as conn:
         totals = conn.execute(
             """
@@ -979,7 +1214,7 @@ async def accounting_summary(month: str = ""):
               COALESCE(SUM(CASE WHEN kind = 'expense' THEN amount ELSE 0 END), 0) AS expense_total,
               COUNT(*) AS transaction_count
             FROM transactions
-            WHERE txn_date >= ? AND txn_date < ?
+            WHERE txn_date >= ? AND txn_date <= ?
             """,
             (start, end),
         ).fetchone()
@@ -988,7 +1223,7 @@ async def accounting_summary(month: str = ""):
             SELECT c.id AS category_id, COALESCE(c.name, '未分类') AS category_name, COALESCE(SUM(t.amount), 0) AS total
             FROM transactions t
             LEFT JOIN categories c ON c.id = t.category_id
-            WHERE t.kind = 'expense' AND t.txn_date >= ? AND t.txn_date < ?
+            WHERE t.kind = 'expense' AND t.txn_date >= ? AND t.txn_date <= ?
             GROUP BY c.id, c.name
             ORDER BY total DESC
             LIMIT 8
@@ -998,7 +1233,7 @@ async def accounting_summary(month: str = ""):
     income_total = float(totals["income_total"] or 0)
     expense_total = float(totals["expense_total"] or 0)
     return {
-        "month": month,
+        **period,
         "income_total": income_total,
         "expense_total": expense_total,
         "net_total": income_total - expense_total,

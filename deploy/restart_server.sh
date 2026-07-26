@@ -174,6 +174,15 @@ mkdir -p "$(dirname "${DB_PATH}")"
 touch "${DB_PATH}"
 chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
 
+echo "==> 配置 CentOS 防火墙端口 ${PORT}/tcp"
+systemctl enable --now firewalld >/dev/null 2>&1 || true
+if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active firewalld >/dev/null 2>&1; then
+  firewall-cmd --permanent --add-port="${PORT}/tcp" >/dev/null || true
+  firewall-cmd --reload >/dev/null || true
+else
+  echo "未检测到可用 firewalld，请确认服务器安全策略已开放 ${PORT}/tcp"
+fi
+
 systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}" >/dev/null
 systemctl restart "${SERVICE_NAME}"
